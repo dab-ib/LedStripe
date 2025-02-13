@@ -1,0 +1,1 @@
+Dieses Projekt soll jeweiles einen LED Streifen per ESP32 als Artnet verfügbar machen.
