@@ -1,9 +1,13 @@
+
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <title>ESP32 Einstellungen</title>
   <link rel="stylesheet" href="/style.css">
+  <style>
+    select, input[type="password"] { margin-top: 0.5rem; width: 100%; }
+  </style>
 </head>
 <body>
   <h1>ESP32 Controller</h1>
@@ -19,6 +23,17 @@
     <button type="submit">Speichern</button>
   </form>
 
+  <h2>WLAN verbinden</h2>
+  <form id="wifiForm">
+    <label for="ssid">Wähle WLAN:</label>
+    <select id="ssid"></select>
+
+    <label for="pass">Passwort:</label>
+    <input type="password" id="pass" required><br>
+
+    <button type="submit">WLAN speichern</button>
+  </form>
+
   <h2>LED-Test</h2>
   <button onclick="testLed('r')">Rot</button>
   <button onclick="testLed('g')">Grün</button>
@@ -26,5 +41,34 @@
   <button onclick="testLed('off')">Aus</button>
 
   <script src="/script.js"></script>
+  <script>
+    // WLAN-Scan durchführen (AJAX)
+    fetch('/scan')
+      .then(res => res.json())
+      .then(data => {
+        const ssidSelect = document.getElementById('ssid');
+        data.networks.forEach(net => {
+          const opt = document.createElement('option');
+          opt.value = net;
+          opt.textContent = net;
+          ssidSelect.appendChild(opt);
+        });
+      });
+
+    // WLAN-Formular absenden
+    document.getElementById('wifiForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const ssid = document.getElementById('ssid').value;
+      const pass = document.getElementById('pass').value;
+      const formData = new URLSearchParams();
+      formData.append('ssid', ssid);
+      formData.append('pass', pass);
+      fetch('/wifi', {
+        method: 'POST',
+        body: formData,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      }).then(res => res.text()).then(alert);
+    });
+  </script>
 </body>
 </html>

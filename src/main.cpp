@@ -36,8 +36,9 @@ Preferences prefs;
 String networkMode = "client";  // "client" oder "ap"
 
 // WLAN Zugangsdaten
-const char* ssid = "iPhone 16 von Dabib";
-const char* password = "Dabib2002";
+String ssid;
+String password;
+String ap_ssid;  // Dynamisch generierte SSID für den Access Point
 
 // Art-Net Konfiguration
 ArtnetWifi artnet;
@@ -98,6 +99,33 @@ void startWebServer() {
         request->send(200, "text/plain", "OK");
     });
     
+    server.on("/wifi", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if (request->hasParam("ssid", true) && request->hasParam("pass", true)) {
+            String newSsid = request->getParam("ssid", true)->value();
+            String newPass = request->getParam("pass", true)->value();
+    
+            prefs.putString("ssid", newSsid);
+            prefs.putString("password", newPass);
+            prefs.putString("netmode", "client");  // beim Speichern direkt auf Client-Modus schalten
+    
+            request->send(200, "text/plain", "WLAN gespeichert. Neustart...");
+            delay(1000);
+            ESP.restart();  // automatisch neu starten
+        } else {
+            request->send(400, "text/plain", "Fehlende Parameter");
+        }
+    });    
+
+    server.on("/scan", HTTP_GET, [](AsyncWebServerRequest *request){
+        int n = WiFi.scanNetworks();
+        String result = "{\"networks\":[";
+        for (int i = 0; i < n; i++) {
+            result += "\"" + WiFi.SSID(i) + "\"";
+            if (i < n - 1) result += ",";
+        }
+        result += "]}";
+        request->send(200, "application/json", result);
+    });       
 
     server.on("/test", HTTP_GET, [](AsyncWebServerRequest *request){
         if (request->hasParam("r")) fill_solid(leds, NUM_LEDS, CRGB::Red);
@@ -128,73 +156,63 @@ void setupWiFi() {
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
 
-    if (networkMode == "ap") {
-        display.println("Starte Access Point...");
-        display.display();
-
-        WiFi.softAP("ESP32-Setup", "esp32pass");  // SSID und Passwort für AP-Modus
-        IPAddress myIP = WiFi.softAPIP();
-
-        Serial.println("Access Point gestartet!");
-        Serial.print("AP IP Adresse: ");
-        Serial.println(myIP);
-
-        display.clearDisplay();
-        display.setCursor(0, 0);
-        display.println("AP gestartet!");
-        display.setCursor(0, 10);
-        display.print("IP: ");
-        display.println(myIP);
-        display.display();
-
-    } else {
+    if (networkMode == "client") {
         display.println("Verbinde mit WLAN...");
         display.display();
 
-        WiFi.begin(ssid, password);
-        Serial.print("Verbinde mit WLAN");
+        WiFi.begin(ssid.c_str(), password.c_str());
+        unsigned long startAttemptTime = millis();
+        const unsigned long timeout = 10000; // 10 Sekunden
 
-        int dotCount = 0;
-
-        while (WiFi.status() != WL_CONNECTED) {
+        while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < timeout) {
             display.clearDisplay();
             display.setCursor(0, 0);
-            display.print("Verbinde mit WLAN");
-
-            for (int i = 0; i < dotCount; i++) {
-                display.print(".");
-            }
-
+            display.print("Verbinde mit WLAN...");
             display.setCursor(0, 20);
-            if (WiFi.getMode() == WIFI_AP) {
-                display.println("Signal: n/a");
-            } else {
-                display.print("Signal: ");
-                display.print(WiFi.RSSI());
-                display.println(" dBm");
-            }
-            
+            display.print("Signal: ");
+            display.print(WiFi.RSSI());
+            display.println(" dBm");
             display.display();
 
-            Serial.print(".");
-            dotCount = (dotCount + 1) % 4;
             delay(500);
         }
 
-        Serial.println(" Verbunden!");
-        display.clearDisplay();
-        display.setCursor(0, 0);
-        display.println("WLAN verbunden!");
-        display.setCursor(0, 10);
-        display.print("IP: ");
-        display.println(WiFi.localIP());
-        display.display();
-        Serial.print("IP Adresse: ");
-        Serial.println(WiFi.localIP());
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("WLAN verbunden");
+            display.clearDisplay();
+            display.setCursor(0, 0);
+            display.println("WLAN verbunden!");
+            display.setCursor(0, 10);
+            display.print("IP: ");
+            display.println(WiFi.localIP());
+            display.display();
+            wifiSignalStrength = WiFi.RSSI();
+            return;
+        }
+
+        // Fallback bei Fehler
+        Serial.println("WLAN fehlgeschlagen, starte AP...");
+        networkMode = "ap";
     }
 
-    wifiSignalStrength = WiFi.RSSI();
+    // Access Point starten
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(ap_ssid.c_str(), "esp32pass");
+    delay(100);  // kurze Pause zur Initialisierung
+    IPAddress myIP = WiFi.softAPIP();
+
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("Access Point gestartet!");
+    display.setCursor(0, 10);
+    display.print("IP: ");
+    display.println(myIP);
+    display.display();
+
+    Serial.print("AP IP: ");
+    Serial.println(myIP);
 }
+
 
 
 // OLED Menü aktualisieren
@@ -209,21 +227,47 @@ void updateMenuDisplay() {
           display.println("ESP32 DMX Controller");
           display.println(" ");
           display.print("IP: ");
-          display.println(WiFi.localIP());
+          if (WiFi.getMode() == WIFI_AP) {
+              display.println(WiFi.softAPIP());
+          } else {
+              display.println(WiFi.localIP());
+          }          
           display.println("Menu: Home");
           break;
 
       case MENU_WIFI:
           display.println("WLAN-Info & IP");
           display.println(" ");
-          display.print("SSID: ");
-          display.println(WiFi.SSID());
+      
+          display.print("Modus: ");
+          if (WiFi.getMode() == WIFI_AP) {
+            display.println("AP");
+            display.print("SSID: ");
+            display.println(ap_ssid);        // <-- dynamische SSID
+            display.print("PW: ");
+            display.println("esp32pass");    // <-- konstant anzeigen
+        }        
+            else {
+              display.println("Client");
+              display.print("SSID: ");
+              display.println(WiFi.SSID());
+          }
+      
           display.print("IP: ");
-          display.println(WiFi.localIP());
-          display.print("Signal: ");
-          display.print(WiFi.RSSI());
-          display.println(" dBm");
-          break;
+          if (WiFi.getMode() == WIFI_AP) {
+              display.println(WiFi.softAPIP());
+          } else {
+              display.println(WiFi.localIP());
+          }          
+      
+          if (WiFi.getMode() == WIFI_STA) {
+              display.print("Signal: ");
+              display.print(WiFi.RSSI());
+              display.println(" dBm");
+          } else {
+              display.println("Signal: n/a");
+          }
+          break;      
 
       case MENU_ARTNET:
           display.println("ArtNet Einstellungen");
@@ -319,11 +363,13 @@ void handleButtonPress() {
 }
 
 void checkWiFiConnection() {
-    if (WiFi.status() != WL_CONNECTED) {
+    // Nur prüfen, wenn wir im WLAN-Client-Modus sind
+    if (WiFi.getMode() == WIFI_STA && WiFi.status() != WL_CONNECTED) {
         Serial.println("Verbindung verloren. Versuche erneut...");
         setupWiFi();
     }
 }
+
 
 // Art-Net Daten empfangen und LEDs steuern
 void onArtnetPacket(uint16_t universeReceived, uint16_t length, uint8_t sequence, uint8_t* data) {
@@ -342,7 +388,6 @@ void onArtnetPacket(uint16_t universeReceived, uint16_t length, uint8_t sequence
 
 void setup() {
     Serial.begin(115200);
-
     // FastLED initialisieren
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
     FastLED.clear();
@@ -357,6 +402,22 @@ void setup() {
     prefs.begin("config", false);  // Namensraum "config"
     universe = prefs.getUInt("universe", 0);
     networkMode = prefs.getString("netmode", "client");
+    ssid = prefs.getString("ssid", "ESP32");
+    password = prefs.getString("password", "");
+
+
+    Serial.println("Geladene WLAN-Daten:");
+    Serial.print("SSID: ");
+    Serial.println(ssid);
+    Serial.print("PASS: ");
+    Serial.println(password);
+
+    // SSID prüfen – wenn ungültig, direkt in AP-Modus
+    if (ssid.length() == 0 || ssid.length() > 31) {
+        Serial.println("Ungültige SSID erkannt. Schalte in AP-Modus.");
+        networkMode = "ap";
+    }
+
 
     // I2C für OLED initialisieren
     Wire.begin(I2C_SDA, I2C_SCL);
@@ -377,11 +438,20 @@ void setup() {
     
     attachInterrupt(ENCODER_BUTTON, onButtonPress, FALLING);
 
+    if (!prefs.isKey("ap_ssid")) {
+        String randomSuffix = String((uint32_t)esp_random(), HEX).substring(0, 6);
+        String newSSID = "Stripe-" + randomSuffix;
+        prefs.putString("ap_ssid", newSSID);
+    }
+    ap_ssid = prefs.getString("ap_ssid", "Stripe-Setup");
+
     setupWiFi();
 
     // Art-Net Setup
     artnet.begin();
     artnet.setArtDmxCallback(onArtnetPacket);
+
+    startWebServer();
 
     updateMenuDisplay();  // Startanzeige
 }
