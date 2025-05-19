@@ -6,6 +6,8 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <ESP32Encoder.h>
+#include <ESPAsyncWebServer.h>
+
 
 // OLED Display Konfiguration
 #define SCREEN_WIDTH 128
@@ -24,9 +26,13 @@ ESP32Encoder encoder;
 volatile bool buttonPressed = false;
 int wifiSignalStrength = 0;  
 
+// Website
+AsyncWebServer server(80);
+bool webServerRunning = false;
+
 // WLAN Zugangsdaten
-const char* ssid = "Test200";
-const char* password = "12345678";
+const char* ssid = "iPhone 16 von Dabib";
+const char* password = "Dabib2002";
 
 // Art-Net Konfiguration
 ArtnetWifi artnet;
@@ -45,6 +51,7 @@ enum MenuState {
     MENU_WIFI,
     MENU_ARTNET,
     MENU_DIAGNOSE,
+    MENU_WEBSERVER,
     MENU_MAX
 };
 
@@ -61,7 +68,25 @@ void IRAM_ATTR onButtonPress() {
   lastInterruptTime = interruptTime;
 }
 
+void startWebServer() {
+    if (webServerRunning) return;
 
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(200, "text/html", "<h1>ESP32 Web Interface</h1><p>Hier kannst du Einstellungen treffen.</p>");
+    });
+
+    server.begin();
+    webServerRunning = true;
+    Serial.println("Webserver gestartet");
+}
+
+void stopWebServer() {
+    if (!webServerRunning) return;
+
+    server.end();
+    webServerRunning = false;
+    Serial.println("Webserver gestoppt");
+}
 
 // WLAN-Verbindung aufbauen
 void setupWiFi() {
@@ -146,11 +171,18 @@ void updateMenuDisplay() {
           display.print("Universum: ");
           display.print(universe);
           if (editingUniverse) {
-              display.print(" ⬅"); // Cursor anzeigen
+              display.print(" <-"); // Cursor anzeigen
           }
           display.println();
           break;
 
+      case MENU_WEBSERVER:
+          display.println("Web Interface");
+          display.println(" ");
+          display.print("Status: ");
+          display.println(webServerRunning ? "An" : "Aus");
+          break;
+      
       case MENU_DIAGNOSE:
           display.println("Diagnose");
           display.println(" ");
@@ -185,24 +217,46 @@ void handleMenuInput(int delta) {
 
 // Button-Logik zur Auswahl eines Menüpunkts
 void handleButtonPress() {
-  Serial.print("Menüpunkt ausgewählt: ");
-  Serial.println(menuIndex);
+    Serial.print("Menüpunkt ausgewählt: ");
+    Serial.println(menuIndex);
 
-  if (menuIndex == MENU_ARTNET) {
-      if (editingUniverse) {
-          Serial.println("Universum gespeichert.");
-          editingUniverse = false; // Bearbeitung beenden und speichern
-      } else {
-          Serial.println("Bearbeitungsmodus für Universum aktiv.");
-          editingUniverse = true; // Bearbeitungsmodus aktivieren
-      }
-  } else {
-      Serial.println("Keine Aktion definiert.");
-  }
-  
-  updateMenuDisplay();
+    switch (menuIndex) {
+        case MENU_WIFI:
+            Serial.println("WLAN wird neu verbunden...");
+            WiFi.disconnect();
+            delay(1000);
+            setupWiFi();
+            break;
+
+        case MENU_ARTNET:
+            if (editingUniverse) {
+                Serial.println("Universum gespeichert.");
+                editingUniverse = false;
+            } else {
+                Serial.println("Bearbeitungsmodus für Universum aktiv.");
+                editingUniverse = true;
+            }
+            break;
+
+        case MENU_WEBSERVER:
+            if (webServerRunning) {
+                stopWebServer();
+            } else {
+                startWebServer();
+            }
+            break;
+
+        case MENU_DIAGNOSE:
+            Serial.println("Diagnose gestartet...");
+            break;
+
+        default:
+            Serial.println("Keine Aktion definiert.");
+            break;
+    }
+
+    updateMenuDisplay();
 }
-
 
 void checkWiFiConnection() {
     if (WiFi.status() != WL_CONNECTED) {
