@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>ESP32 Einstellungen</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <h1>ESP32 Controller</h1>
+
+  <form id="settingsForm">
+    <label>Universum:</label>
+    <input type="number" id="universe" min="0" max="511"><br>
+
+    <label>Netzwerkmodus:</label><br>
+    <input type="radio" name="netmode" value="client"> WLAN-Client<br>
+    <input type="radio" name="netmode" value="ap"> Access Point<br>
+
+    <button type="submit">Speichern</button>
+  </form>
+
+  <h2>LED-Test</h2>
+  <button onclick="testLed('r')">Rot</button>
+  <button onclick="testLed('g')">Grün</button>
+  <button onclick="testLed('b')">Blau</button>
+  <button onclick="testLed('off')">Aus</button>
+
+  <script src="/script.js"></script>
+</body>
+</html>

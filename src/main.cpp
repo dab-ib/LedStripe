@@ -7,7 +7,9 @@
 #include <Adafruit_SSD1306.h>
 #include <ESP32Encoder.h>
 #include <ESPAsyncWebServer.h>
-
+#include <Preferences.h>
+#include <SPIFFS.h>
+#include <ArduinoJson.h>
 
 // OLED Display Konfiguration
 #define SCREEN_WIDTH 128
@@ -29,6 +31,9 @@ int wifiSignalStrength = 0;
 // Website
 AsyncWebServer server(80);
 bool webServerRunning = false;
+
+Preferences prefs;
+String networkMode = "client";  // "client" oder "ap"
 
 // WLAN Zugangsdaten
 const char* ssid = "iPhone 16 von Dabib";
@@ -71,8 +76,36 @@ void IRAM_ATTR onButtonPress() {
 void startWebServer() {
     if (webServerRunning) return;
 
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send(200, "text/html", "<h1>ESP32 Web Interface</h1><p>Hier kannst du Einstellungen treffen.</p>");
+    server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
+
+    server.on("/config.json", HTTP_GET, [](AsyncWebServerRequest *request){
+        String json = "{";
+        json += "\"universe\":" + String(universe) + ",";
+        json += "\"netmode\":\"" + networkMode + "\"";
+        json += "}";
+        request->send(200, "application/json", json);
+    });
+
+    server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (request->hasParam("universe", true)) {
+            universe = request->getParam("universe", true)->value().toInt();
+            prefs.putUInt("universe", universe);
+        }
+        if (request->hasParam("netmode", true)) {
+            networkMode = request->getParam("netmode", true)->value();
+            prefs.putString("netmode", networkMode);
+        }
+        request->send(200, "text/plain", "OK");
+    });
+    
+
+    server.on("/test", HTTP_GET, [](AsyncWebServerRequest *request){
+        if (request->hasParam("r")) fill_solid(leds, NUM_LEDS, CRGB::Red);
+        else if (request->hasParam("g")) fill_solid(leds, NUM_LEDS, CRGB::Green);
+        else if (request->hasParam("b")) fill_solid(leds, NUM_LEDS, CRGB::Blue);
+        else fill_solid(leds, NUM_LEDS, CRGB::Black);
+        FastLED.show();
+        request->send(200, "text/plain", "OK");
     });
 
     server.begin();
@@ -94,48 +127,75 @@ void setupWiFi() {
     display.setCursor(0, 0);
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
-    display.println("Verbinde mit WLAN...");
-    display.display();
 
-    WiFi.begin(ssid, password);
-    Serial.print("Verbinde mit WLAN");
-
-    int dotCount = 0;
-
-    while (WiFi.status() != WL_CONNECTED) {
-        display.clearDisplay();
-        display.setCursor(0, 0);
-        display.print("Verbinde mit WLAN");
-
-        for (int i = 0; i < dotCount; i++) {
-            display.print(".");
-        }
-
-        display.setCursor(0, 20);
-        display.print("Signal: ");
-        display.print(WiFi.RSSI());
-        display.println(" dBm");
-
+    if (networkMode == "ap") {
+        display.println("Starte Access Point...");
         display.display();
 
-        Serial.print(".");
-        dotCount = (dotCount + 1) % 4; 
-        delay(500);
-    }
+        WiFi.softAP("ESP32-Setup", "esp32pass");  // SSID und Passwort für AP-Modus
+        IPAddress myIP = WiFi.softAPIP();
 
-    Serial.println(" Verbunden!");
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.println("WLAN verbunden!");
-    display.setCursor(0, 10);
-    display.print("IP: ");
-    display.println(WiFi.localIP());
-    display.display();
-    Serial.print("IP Adresse: ");
-    Serial.println(WiFi.localIP());
+        Serial.println("Access Point gestartet!");
+        Serial.print("AP IP Adresse: ");
+        Serial.println(myIP);
+
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println("AP gestartet!");
+        display.setCursor(0, 10);
+        display.print("IP: ");
+        display.println(myIP);
+        display.display();
+
+    } else {
+        display.println("Verbinde mit WLAN...");
+        display.display();
+
+        WiFi.begin(ssid, password);
+        Serial.print("Verbinde mit WLAN");
+
+        int dotCount = 0;
+
+        while (WiFi.status() != WL_CONNECTED) {
+            display.clearDisplay();
+            display.setCursor(0, 0);
+            display.print("Verbinde mit WLAN");
+
+            for (int i = 0; i < dotCount; i++) {
+                display.print(".");
+            }
+
+            display.setCursor(0, 20);
+            if (WiFi.getMode() == WIFI_AP) {
+                display.println("Signal: n/a");
+            } else {
+                display.print("Signal: ");
+                display.print(WiFi.RSSI());
+                display.println(" dBm");
+            }
+            
+            display.display();
+
+            Serial.print(".");
+            dotCount = (dotCount + 1) % 4;
+            delay(500);
+        }
+
+        Serial.println(" Verbunden!");
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println("WLAN verbunden!");
+        display.setCursor(0, 10);
+        display.print("IP: ");
+        display.println(WiFi.localIP());
+        display.display();
+        Serial.print("IP Adresse: ");
+        Serial.println(WiFi.localIP());
+    }
 
     wifiSignalStrength = WiFi.RSSI();
 }
+
 
 // OLED Menü aktualisieren
 void updateMenuDisplay() {
@@ -287,6 +347,16 @@ void setup() {
     FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
     FastLED.clear();
     FastLED.show();
+
+    if (!SPIFFS.begin(true)) {
+        Serial.println("SPIFFS konnte nicht gestartet werden");
+        return;
+    }    
+
+    // Preferences für Website
+    prefs.begin("config", false);  // Namensraum "config"
+    universe = prefs.getUInt("universe", 0);
+    networkMode = prefs.getString("netmode", "client");
 
     // I2C für OLED initialisieren
     Wire.begin(I2C_SDA, I2C_SCL);
